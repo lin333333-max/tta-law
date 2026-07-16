@@ -1,0 +1,8 @@
+checkpoints/
+logs/
+.claude
+dataset/cache/
+dataset/
+*.pt
+*.json
+__pycache__/

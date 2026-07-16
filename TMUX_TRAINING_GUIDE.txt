@@ -1,0 +1,128 @@
+================================================================================
+                    在tmux中执行训练的完整指南
+================================================================================
+
+## 🚀 立即执行（复制粘贴到终端）
+
+### 完整命令
+```bash
+# 创建tmux会话
+tmux new -s train
+
+# 进入项目目录
+cd /root/tta-law
+
+# 从epoch 11恢复训练
+python train_ultrafast.py --resume checkpoints/checkpoint_epoch_11.pt
+
+# 训练启动后，按 Ctrl+B 然后按 D 分离tmux会话
+```
+
+---
+
+## 📋 tmux常用操作
+
+### 基本操作
+```bash
+# 创建会话
+tmux new -s train
+
+# 分离会话（训练继续运行）
+Ctrl+B 然后按 D
+
+# 重新连接
+tmux attach -t train
+# 或简写
+tmux a -t train
+
+# 列出所有会话
+tmux ls
+
+# 终止会话
+tmux kill-session -t train
+```
+
+---
+
+## 📊 训练配置（已优化）
+
+```python
+learning_rate = 5e-6     # 超小学习率
+num_epochs = 40          # 充分训练
+batch_size = 16          # 罕见标签友好
+base_lambda = 3.0        # 强对齐
+warmup_ratio = 0.15      # 稳定启动
+
+从Epoch 12继续到40
+预计时间: ~3.5小时
+目标Ma-F1: 48-52%
+```
+
+---
+
+## 🎯 训练过程
+
+### 预期进度
+```
+Epoch 12-20: ~1.5小时 (Ma-F1 ~42-45%)
+Epoch 21-30: ~1.5小时 (Ma-F1 ~47-50%)
+Epoch 31-40: ~1小时   (Ma-F1 ~48-52%)
+```
+
+### 监控方法
+```bash
+# 在另一个终端查看
+bash monitor_training.sh
+
+# 或查看训练历史
+python -c "
+import json
+with open('./logs/training_history.json', 'r') as f:
+    history = json.load(f)
+latest = history[-1]
+print(f'Epoch {latest[\"epoch\"]}: Ma-F1 = {latest[\"dev_metrics\"][\"avg_ma_f1\"]*100:.2f}%')
+"
+```
+
+---
+
+## ⚠️ 重要提醒
+
+### 磁盘空间
+```
+✓ 自动清理已启用
+✓ 只保留最近3个checkpoint
+✓ 14GB可用空间充足
+```
+
+### 如果训练中断
+```bash
+# 查看最新checkpoint
+ls -lt checkpoints/checkpoint_epoch_*.pt | head -1
+
+# 从最新checkpoint恢复
+python train_ultrafast.py --resume checkpoints/checkpoint_epoch_XX.pt
+```
+
+---
+
+## 📝 快速参考
+
+### 一键命令（复制即用）
+```bash
+tmux new -s train
+cd /root/tta-law
+python train_ultrafast.py --resume checkpoints/checkpoint_epoch_11.pt
+```
+
+### 分离后重连
+```bash
+tmux a -t train
+```
+
+---
+
+生成时间: 2026-07-16
+状态: ✅ 后台进程已停止，等待你在tmux中启动
+命令: 见上方"一键命令"
+================================================================================

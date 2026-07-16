@@ -1,0 +1,250 @@
+================================================================================
+                        当前状态与解决方案
+================================================================================
+
+## 📊 当前情况
+
+### 问题诊断
+```
+模型checkpoint:  116 法条（best_model.pt）
+当前数据集:      114 法条（train.json）
+映射字典:        114 法条（刚重建）
+
+结果: 维度不匹配，无法测试TTA
+```
+
+### 为什么会这样？
+```
+1. 你对齐后训练了模型（116法条）
+2. 之后数据集变成了114法条
+3. 对齐后的数据文件（train_kljp_aligned.json）被删除或丢失
+4. 现在模型和数据不匹配
+```
+
+---
+
+## 🎯 解决方案
+
+### 方案A：使用原始164法条数据测试TTA（快速查看）
+
+这样可以用之前的best_model.pt测试，虽然结果不是基于对齐后的数据。
+
+```bash
+# 1. 恢复原始数据
+cp dataset/train_original.json dataset/train.json
+cp dataset/dev_original.json dataset/dev.json
+cp dataset/test_original.json dataset/test.json
+
+# 2. 更新config
+python -c "
+import re
+with open('config.py', 'r') as f:
+    content = f.read()
+content = re.sub(r'num_articles = 114', 'num_articles = 164', content)
+content = re.sub(r'num_charges = 141', 'num_charges = 170', content)
+with open('config.py', 'w') as f:
+    f.write(content)
+print('✓ 恢复为原始164法条、170罪名')
+"
+
+# 3. 重建映射字典
+python build_mappings.py
+
+# 4. 测试TTA（使用之前训练的模型）
+# 注意：这个best_model.pt是116法条的，仍然不匹配
+# 需要使用更早的164法条的模型
+```
+
+**问题**: 你之前的164法条模型可能已被覆盖
+
+---
+
+### 方案B：重新对齐并训练（推荐，完整解决）
+
+```bash
+# 1. 重新执行对齐
+python align_with_kljp.py
+
+# 2. 使用对齐后的数据
+cp dataset/train_kljp_aligned.json dataset/train.json
+cp dataset/dev_kljp_aligned.json dataset/dev.json
+cp dataset/test_kljp_aligned.json dataset/test.json
+
+# 3. 更新config
+python -c "
+import json
+with open('./dataset/kljp_alignment_info.json', 'r') as f:
+    info = json.load(f)
+num_articles = info['aligned']['num_articles']
+num_charges = info['aligned']['num_charges']
+
+import re
+with open('config.py', 'r') as f:
+    content = f.read()
+content = re.sub(r'num_articles = \d+', f'num_articles = {num_articles}', content)
+content = re.sub(r'num_charges = \d+', f'num_charges = {num_charges}', content)
+# 优化超参数
+content = re.sub(r'learning_rate = 2e-5', 'learning_rate = 1e-5', content)
+content = re.sub(r'num_epochs = 20', 'num_epochs = 30', content)
+content = re.sub(r'base_lambda = 1.0', 'base_lambda = 2.0', content)
+with open('config.py', 'w') as f:
+    f.write(content)
+print(f'✓ 配置已更新: {num_articles}法条, {num_charges}罪名')
+print('✓ 超参数已优化')
+"
+
+# 4. 重建映射
+python build_mappings.py
+
+# 5. 清理并重新训练
+rm -rf dataset/cache/*
+rm -f checkpoints/checkpoint_epoch_*.pt
+python preprocess_data.py
+python train_ultrafast.py
+
+# 6. 训练完成后测试TTA
+python test_tta.py --mode standard
+python test_tta.py --mode online
+python test_tta.py --mode adaptive
+```
+
+**预期效果**:
+- 对齐后Ma-F1: 40-43%（优化超参数）
+- TTA后Ma-F1: 42-46%（+2-3%）
+
+---
+
+### 方案C：放弃TTA，直接优化重训（最快到目标）
+
+既然当前best_model.pt无法测试TTA，不如直接优化重训。
+
+```bash
+# 执行方案B的步骤1-5
+# 跳过步骤6（TTA测试）
+
+# 预期: Ma-F1 → 40-43%
+# 之后如果需要，再测试TTA
+```
+
+---
+
+## 💡 我的建议
+
+### 推荐：方案B或C
+
+**原因**:
+1. 当前best_model.pt（116法条）已无法使用
+2. 数据集混乱，需要重新整理
+3. 之前的训练结果（35.45%）低于预期
+4. 应该趁机优化超参数重新训练
+
+**执行顺序**:
+```
+1. 重新对齐数据集（align_with_kljp.py）
+2. 优化超参数（lr=1e-5, epochs=30）
+3. 重新训练
+4. 测试TTA（可选）
+```
+
+**时间成本**: 1.5天（训练）
+**预期收益**: Ma-F1 从35.45% → 40-43%
+
+---
+
+## 📋 立即执行（方案B）
+
+### 第一步：重新对齐（5分钟）
+
+```bash
+cd /root/tta-law
+
+# 重新对齐
+python align_with_kljp.py
+
+# 使用对齐后的数据
+cp dataset/train_kljp_aligned.json dataset/train.json
+cp dataset/dev_kljp_aligned.json dataset/dev.json
+cp dataset/test_kljp_aligned.json dataset/test.json
+```
+
+### 第二步：配置优化（1分钟）
+
+```bash
+python -c "
+import json
+import re
+
+# 读取对齐信息
+with open('./dataset/kljp_alignment_info.json', 'r') as f:
+    info = json.load(f)
+num_articles = info['aligned']['num_articles']
+num_charges = info['aligned']['num_charges']
+
+# 更新config
+with open('config.py', 'r') as f:
+    content = f.read()
+
+content = re.sub(r'num_articles = \d+', f'num_articles = {num_articles}', content)
+content = re.sub(r'num_charges = \d+', f'num_charges = {num_charges}', content)
+content = re.sub(r'learning_rate = 2e-5', 'learning_rate = 1e-5', content)
+content = re.sub(r'num_epochs = 20', 'num_epochs = 30', content)
+content = re.sub(r'base_lambda = 1.0', 'base_lambda = 2.0', content)
+
+with open('config.py', 'w') as f:
+    f.write(content)
+
+print(f'✓ 标签数: {num_articles}法条, {num_charges}罪名')
+print('✓ 超参数已优化')
+"
+```
+
+### 第三步：重建并训练（1.5天）
+
+```bash
+# 重建映射
+python build_mappings.py
+
+# 清理
+rm -rf dataset/cache/*
+rm -f checkpoints/checkpoint_epoch_*.pt
+
+# 预处理
+python preprocess_data.py
+
+# 训练（在tmux中执行）
+tmux new -s train
+python train_ultrafast.py
+# Ctrl+B D 分离
+```
+
+---
+
+## 📊 预期结果
+
+```
+当前状态: 35.45% Ma-F1（模型不可用）
+    ↓
+重新对齐 + 优化训练
+    ↓
+预期结果: 40-43% Ma-F1
+    ↓
++ TTA（可选）
+    ↓
+最终: 42-46% Ma-F1
+```
+
+---
+
+## ⚠️ 关键要点
+
+1. **best_model.pt已不可用**（116法条 vs 114法条不匹配）
+2. **必须重新训练**
+3. **趁机优化超参数**（lr=1e-5, epochs=30）
+4. **TTA可以之后再测**（先确保基础模型好）
+
+---
+
+生成时间: 2026-07-16
+状态: 数据和模型不匹配
+建议: 立即执行方案B（重新对齐并训练）
+================================================================================

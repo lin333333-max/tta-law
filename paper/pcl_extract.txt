@@ -1,0 +1,951 @@
+
+--- Page 1 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+Yi Su * 1 Yixin Ji * 1 Juntao Li 1 Hai Y e2 Min Zhang 1
+Abstract
+Currently, pre-trained language models (PLMs)
+do not cope well with the distribution shift prob-
+lem, resulting in models trained on the training
+set failing in real test scenarios. To address this
+problem, the test-time adaptation (TTA) shows
+great potential, which updates model parameters
+to suit the test data at the testing time. Exist-
+ing TTA methods rely on well-designed auxiliary
+tasks or self-training strategies based on pseudo-
+label. However, these methods do not achieve
+good trade-offs regarding performance gains and
+computational costs. To obtain some insights
+about such a dilemma, we take two representa-
+tive TTA methods, i.e., Tent and OIL, for explo-
+ration and ﬁnd that stable prediction is the key
+to achieving a good balance. Accordingly, we
+propose perturbation consistency learning (PCL),
+a simple test-time adaptation method to promote
+the model to make stable predictions for samples
+with distribution shifts in this paper. Extensive
+experiments on adversarial robustness and cross-
+lingual transferring demonstrate that our method
+can achieve higher or comparable performance
+with less inference time over strong PLM back-
+bones and previous state-of-the-art TTA methods.
+1. Introduction
+Pre-trained language models (PLMs) have achieved stun-
+ning performance on many NLP tasks (Devlin et al., 2019;
+Liu et al., 2019; Lewis et al., 2020a; Raffel et al., 2020;
+Brown et al., 2020; Radford et al., 2018; OpenAI, 2022).
+Nevertheless, we are still far from achieving a trustworthy
+NLP model. In practical scenarios, the test data inevitably
+shift in distribution from the training data, such as adver-
+sarial attack sample (Wang et al., 2022), cross-lingual (Li
+et al., 2021), cross-domain (Ramponi & Plank, 2020), and
+*Equal contribution 1Institute of Computer Science and Tech-
+nology, Soochow University, China 2Department of Computer
+Science, National University of Singapore, Singapore. Correspon-
+dence to: Juntao Li <ljt@suda.edu.cn>.
+Work in progress.
+so on (Hupkes et al., 2022). Unfortunately, most current
+NLP models are not robust to distribution shifts (Ribeiro
+et al., 2020; Wang et al., 2022). Previous work has explored
+several approaches to improve the performance of PLMs on
+out-of-distribution data, such as adversarial training (Madry
+et al., 2018; Zhu et al., 2020b), data augmentation (Zhou
+et al., 2021). These methods attempt to cover more data dis-
+tribution during the training phase and reduce the difference
+in distribution between the training and test data. However,
+they cannot prevent the occurrence of distribution shifts
+in the face of dynamically changing real-world scenarios.
+Thus, from another perspective, some work (Wang et al.,
+2021b; Sun et al., 2020; Niu et al., 2022; Ye et al., 2022)
+have attempted to update the model based on test samples
+to accommodate distribution shifts during the testing phase
+of the model, called test-time adaptation (TTA).
+The core of TTA is how to update the model with unlabelled
+test data, sacriﬁcing as little inference time as possible for
+a model that is more robust to distribution shift. Existing
+TTA methods can be grouped into two categories: (1) based
+on well-designed auxiliary tasks, such as rotation angle pre-
+diction and contrastive learning (Sun et al., 2020; Liu et al.,
+2021; Bartler et al., 2022; Gandelsman et al., 2022; Chen
+et al., 2022); (2) based on self-training strategies (Wang
+et al., 2021b; Niu et al., 2022; Zhang et al., 2022; Ye et al.,
+2022; Goyal et al., 2022). The ﬁrst approach requires train-
+ing data to train additional auxiliary task modules. However,
+in practice, we may not have access to training data, and
+retraining an already deployed model would waste many
+resources. The second one circumvents the shortcomings
+of the ﬁrst one. Still, the performance of the self-training
+strategy depends on the quality of the pseudo-labels output
+by the model, and low-quality pseudo-labels can lead to the
+accumulation of errors in the iterative self-training process.
+To gain more insights, we launch a study on two represen-
+tative TTA methods, Tent and OIL. We ﬁnd that Tent uses
+dropout in the test-time adaptation phase, which outputs
+soft labels that suffer from instability. In contrast, OIL uses
+pseudo-labels derived from the stable inference results of
+the teacher model. Although OIL can achieve a more robust
+model than the other methods, it requires forward propa-
+gation several times, resulting in a signiﬁcant sacriﬁce of
+inference time. Therefore, there are reasons to believe that
+stable prediction is the key to achieving a good balance
+arXiv:2304.12764v1  [cs.CL]  25 Apr 2023
+
+--- Page 2 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+regarding performance gains and inference speed.
+In this paper, we propose perturbation consistency learning
+(PCL) to achieve Pareto improvement (Liu et al., 2022) over
+existing TTA methods. Expressly, we turn off dropout for
+the model to have a stable output during the test-time phase,
+and, in order not to lose the robustness brought by dropout,
+we add perturbations to the output features to constrain the
+consistency of the model’s predictions for the original and
+perturbed samples. To verify the effectiveness of our pro-
+posed method, we launch experiments on two distribution
+shift settings (adversarial attack and cross-lingual) and two
+tasks (question answering and named entity recognition).
+Experimental results demonstrate that our proposed PCL sig-
+niﬁcantly improves the performance of out-of-distribution
+data upon strong PLMs and achieves higher or comparable
+performance with less inference time over previous state-of-
+the-art TTA methods.
+Overall, our contributions are shown below:
+• We investigate the reasons for the poor performance of
+typical fully test-time adaptation in NLP tasks. We ﬁnd
+that the unstable output caused by dropout in the test-time
+stage is the critical factor causing this problem.
+• We propose the perturbation consistency learning (PCL)
+for TTA in NLP tasks, which turns off dropout in the
+encoder and constrains the predictive consistency of the
+model to feature perturbations.
+• Experimental results and analysis on QA and NER tasks
+under adversarial attack and cross-lingual transfer settings
+demonstrate that our proposed PCL achieves a better trade-
+off between performance and efﬁciency than previous
+TTA methods.
+2. Related Work
+Test-Time Adaptation Test-Time Adaptation (TTA) is a
+new paradigm to deal with the distribution shift between
+training data and test data. TTA uses self-supervised sig-
+nals to update and give prediction results at the inference
+stage. It has achieved great success in CV tasks (Sun et al.,
+2020; Liu et al., 2021; Wang et al., 2021b; Bartler et al.,
+2022; Niu et al., 2022; Gandelsman et al., 2022; Zhang
+et al., 2022). TTA can be divided into test-time training
+and fully test-time adaptation according to whether or not
+to modify the target of the training phase and access the
+training data. Test-time training usually requires a well-
+designed self-supervised auxiliary task to adjust the model
+to the distribution shift. Sun et al. (2020) utilize the rota-
+tion angle prediction as the auxiliary task in the training
+stage and adapt the model during the test time. Following
+this line of thought, a series of works analyze and devise
+more effective auxiliary tasks (Liu et al., 2021; Bartler et al.,
+2022; Gandelsman et al., 2022; Chen et al., 2022). On the
+other line, the fully test time adaptation updates the model
+with test data using a self-training strategy without modify-
+ing the training process. Wang et al. (2021b) propose Tent,
+which adjusts the model by minimizing entropy. However,
+fully test-time adaptation faces performance degradation
+due to the low quality of pseudo-labels and catastrophic
+forgetting, so current works (Niu et al., 2022; Zhang et al.,
+2022; Jang & Chung, 2022; Gong et al., 2022) focus on
+improving the quality of pseudo-labels and designing more
+robust tuning methods. In NLP, TTA has also attracted the
+attention of many researchers. Wang et al. (2021c) learn
+to combine adapters on low-resource languages at test time
+to improve sequence labeling tasks. Banerjee et al. (2021)
+generate question and answer pairs for training during test-
+ing time. Ye et al. (2022) ﬁrst evaluate the effectiveness of
+fully test-time adaptation in the question-answering task and
+introduce a teacher-student paradigm to ensure the quality
+of pseudo-labels.
+Robustness in NLP tasks Building robust models is the
+only way to be trustworthy artiﬁcial intelligence, so the ﬁeld
+of NLP has been pursuing the robustness of models. Wang
+et al. (2022) divide robustness in NLP into two categories,
+one for adversarial robustness under artiﬁcial attacks and
+one for naturally occurring distribution shifts. For adversar-
+ial robustness, researchers (Ebrahimi et al., 2018; Alzantot
+et al., 2018; Jia et al., 2019; Garg & Ramakrishnan, 2020;
+Lin et al., 2021; Ravichander et al., 2021) have proposed
+a number of methods for constructing adversarial attack
+samples to evaluate the model’s adversarial robustness. Ad-
+versarial samples can be correctly identiﬁed for humans but
+are confusing for models. Li et al. (2018) use the Jacobian
+matrix to decide the word to be modiﬁed and modify it by
+different strategies. Li et al. (2020) ﬁnd vulnerable words
+with BERT and replace them with top-K words generated by
+BERT. In NLP, naturally occurring distribution shifts have
+rich real-world scenarios. Thus researchers hope models
+that are robust to distribution shift to perform well across
+languages (Hu et al., 2020; Jafari et al., 2021; Zheng et al.,
+2021; Yang et al., 2022; Mao et al., 2022), across domains
+(Hendrycks et al., 2020; Ramponi & Plank, 2020; Malinin
+et al., 2021), and on different styles of text. Many robust-
+ness tuning methods are proposed to improve the robustness
+of NLP models, such as data augmentation (Kaushik et al.,
+2020; Khashabi et al., 2020; Chen et al., 2020; 2021; Zhou
+et al., 2021) and adversarial training (Miyato et al., 2017;
+Madry et al., 2018; Zhu et al., 2020a; Wang et al., 2021a).
+3. Preliminary
+3.1. Problem Formulation
+In this paper, we only discuss the fully test-time adaptation
+setting, in which we cannot access training data. Suppose we
+
+--- Page 3 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+45
+50
+55
+60
+65
+70
+0 0.05 0.1 0.15 0.2
+NoiseQA-syn NoiseQA-na XQuAD
+Figure 1. Results (%) of different dropout rates on NoiseQA-syn,
+the base model is XLMR-base. Abscissa refers to the dropout rate.
+have training data pairs{xi
+s,yi
+s}ns
+i=1∈D s wherexi
+s∈X s
+and yi
+s ∈Y s, xi
+s refers to the input and yi
+s refers to the
+corresponding labels. The distribution of the training data is
+Ps. We deﬁne an encoderf (·) :Xs− →RD and a classiﬁer
+g(·) : RD− →RC where D and C are feature dimensions
+and the number of classes. The model is parameterized to
+θ after training. In the test phase, we have test data sam-
+ples{xi
+t}nt
+i=1∈X t. Suppose the underlying corresponding
+labels are{yi
+t}nt
+i=1∈Y t. The distribution of the test data
+isPt̸=Ps. If we use the trained model θ to infer the test
+data, the model’s performance will be degraded due to the
+distribution shifts. We adapt the model to the test data to
+avoid performance degradation by optimizing an unsuper-
+vised loss during testingL(xt). Some representative fully
+test-time adaptation methods, such as Tent, EATA use the
+predicted probability as pseudo labels and minimize the
+entropy of model predictions:
+L(xt) =−
+∑
+c
+p (ˆyc|xt) logp (ˆyc|xt), (1)
+wherep (ˆyc) is the probability of the c-th category.
+3.2. What limits the effect of TTA in NLP tasks?
+In this section, we take Tent (Wang et al., 2021b) as an ex-
+ample and discuss what limits the effect of TTA. We choose
+Tent because it is a typical and strong baseline, and many
+advanced TTA methods are based on it. Tent performs very
+well in CV tasks with ResNet (He et al., 2016), but we ﬁnd
+in our experiments that Tent does not perform as well when
+migrating to NLP tasks with pre-trained language models.
+In CV tasks, Tent keeps the model in the training mode and
+updates BatchNorm layers. The widely used ResNet does
+not have dropout layers, so the training mode only affects
+the BatchNorm layer. However, in NLP tasks, mainstream
+pre-trained language models all use the Transformer net-
+work, including the dropout layer and LayerNorm layer,
+Test Data
+Encoder
+classifier
+dropout
+KL div
++
+feature
++
+perturb
+Figure 2. Overview of perturbation consistency learning. The ﬁnal
+prediction is made on the original feature.
+so the training mode will impact dropout. In order to in-
+crease the robustness of the model during training, Tent uses
+dropout. However, dropout will also make the model lose
+some helpful information, resulting in the unstable output
+of the model. The unstable output will have two effects
+on Tent. Firstly, the output quality will be reduced, thus
+reducing the model’s accuracy. Secondly, the output will
+be used as pseudo-labels to guide the update of the model.
+Low-quality pseudo-labels will make it easier for the model
+to learn the wrong information. In contrast, OIL, a TTA
+method, which achieves performance improvement in NLP
+tasks, turns off the teacher model’s dropout and uses the
+teacher model’s stable prediction to guide the student model.
+In order to study the effect of dropout on the performance
+of Tent, we have done a simple experiment on the NoiseQA-
+syn dataset (Ravichander et al., 2021). The results are shown
+in Figure 1. We use Tent under different dropout rates and
+ﬁnd that the performance of Tent will gradually improve
+as the dropout rate decreases. Thus, there are reasons to
+believe that dropout’s improvement in model robustness and
+its instability of output constitutes a contradiction, which
+limits the performance of fully TTA methods represented
+by Tent in NLP tasks.
+4. Method
+In this section, we introduce our perturbation consistency
+learning (PCL) method. Figure 2 shows the overview of our
+proposed method. We already have a trained modelf◦gθ
+and test data {xi
+t}nt
+i=1 ∈X t. The trained model outputs
+predicted probabilityp(ˆy|xt) = g(fθ (xt)).
+
+--- Page 4 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+4.1. Perturbation Consistency Learning
+As we found in Section 3.2, turning on dropout during the
+test time phase will lose the features of the sample and cause
+the quality of the pseudo-label to decrease, which may make
+the test-time adaptation fail; while turning off dropout may
+cause over-ﬁtting when optimizing the model (Srivastava
+et al., 2014). To break this dilemma, we propose perturba-
+tion consistency learning by adding slight perturbation in the
+feature space and encouraging the model to produce consis-
+tent prediction between the original and perturbed samples,
+which is different from dropout consistency regularization
+(Liang et al., 2021).
+Speciﬁcally, given the test dataxt, we feedxt to go through
+the forward pass of the model and obtain the feature h, then
+we add random perturbation to h. We will introduce our
+perturbation strategies in Section 4.2. The classiﬁer will out-
+put two predicted probabilities of the original feature h and
+perturbed feature h′, denoted as p(ˆy|xt) andp′(ˆy|xt). To
+make the model robust to feature perturbations, we constrain
+the predicted probability of the perturbed features to be con-
+sistent with the original features. We use Kullback-Leibler
+(KL) divergence as the objection to model optimization:
+KL(p′∥p) =
+∑
+c
+p′(ˆyc|xt) logp′(ˆyc|xt)
+p(ˆyc|xt)
+=H(p′,p )−H(p′).
+(2)
+When minimizing the KL divergence, the entropy of
+p′(ˆy|xt) is maximized, which conﬂicts with the minimized
+entropy of Tent, so PCL uses the KL divergence as the ob-
+jective function L(xt) instead of the regularization term
+of Equation 1. The overall test-time adaptation algorithm
+based on our PCL is given in Algorithm 1. For mainstream
+NLP models, the encoder takes up most of the model pa-
+rameters. Our PCL method only goes through the encoder
+once and the classiﬁer twice in forward propagation, so the
+increase in computation cost compared to Tent is negligible.
+4.2. Perturbation Strategies
+We add perturbations to the features to enable the model to
+remain robust under minor perturbations through the consis-
+tency constraint. Overly aggressive perturbations may cause
+the predicted distributions of the original features and the
+perturbed features to differ too much, leading to the failure
+of the consistency constraint, for which we need to choose
+the perturbation strategy carefully. In PCL, we use two sim-
+ple yet effective perturbation strategies: dropout and normal
+distribution noise. The feature will be passed to a dropout
+layer ﬁrst, then added with the normal distribution noise
+ϵ∼N (0, I). This process can be expressed as follows:
+h′ = Dropout( h) +ϵ (3)
+Algorithm 1 Perturbation Consistency Learning
+Input: Test data{xi
+t}nt
+i=1, the trained model parameterθ.
+Output: model parameterθ′ and prediction results ˆy of
+test data
+for batch in test data do
+while not converged do
+1. feed forward and obtain the output distribution
+p(ˆy|xt) andp′(ˆy|xt);
+2. calculate the KL-divergence loss by Equation 2;
+3. update the model parameters by minimizing Equa-
+tion 2.
+end while
+output prediction results ˆy = arg max
+c
+p(ˆyc|xt)
+end for
+where Dropout means the forward propagation in the
+dropout layer. The choice of perturbing methods is diverse.
+Theoretically, many other perturb methods can also be ef-
+fective for PCL, but it should be noted that the perturbation
+needs to be mild and should not disrupt the original fea-
+tures.
+5. Experiments
+5.1. Dataset
+To verify our proposed method’s effectiveness, we have
+conducted experiments on the question answering (QA) and
+named entity recognition (NER) tasks under adversarial
+attack and cross-lingual transfer settings. The datasets we
+used include the following:
+NoiseQA (Ravichander et al., 2021) deﬁned three kinds
+of noise based on the SQuAD dataset (Rajpurkar et al.,
+2018): speech recognition noise, keyboard input noise, and
+machine translation noise. Then, the synthetic and natural
+datasets are constructed for each kind of noise, respectively.
+XQuAD (Artetxe et al., 2020) is a cross-lingual QA dataset.
+It selects a subset of the SQuAD (Rajpurkar et al., 2016)
+development set and is translated into ten languages.
+MLQA (Lewis et al., 2020b) is also a cross-lingual QA
+dataset. It contains 7 languages but more samples for each
+language than XQuAD.
+RockNER (Lin et al., 2021) is a simple and effective
+method to generate adversarial samples. The method in-
+cludes two levels of attack. At the entity level, it uses other
+entities of the same semantic type in Wikipedia to replace
+the target entity. At the context level, it uses the pre-trained
+language model to generate word replacement. The method
+is applied to the OntoNotes dataset (Weischedel et al., 2013)
+to generate the adversarial dataset.
+
+--- Page 5 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+Table 1. Results (%) on QA for XLMR-base and XLMR-large. We report EM and F1 metrics for each dataset and its average results. We
+also report the number of samples predicted by the model per second. Bold: the best results. Star∗: the second best results.
+Models NoiseQA-syn NoiseQA-na XQuAD MLQA A vg. Speed
+EM F1 EM F1 EM F1 EM F1 EM F1
+xlmr-base 66.64 78.67 66.25 77.91 55.59 71.42 47.14 65.27 58.91 73.32 225.78
+xTune 70.95 81.52 69.75 80.66 58.78 73.75 49.87 67.76 62.34 75.92 225.78
+Tent 65.61 77.06 65.06 76.38 53.78 68.96 44.18 62.30 57.16 71.18 97.21
+EATA 65.23 76.73 64.65 76.05 53.95 68.85 43.98 62.02 56.95 70.91 95.92
+OIL 68.55 79.65 67.75 78.94 57.63 72.37 47.90 65.54 60.46 74.13 12.16
+PCL 68.44∗ 79.61∗ 67.40∗ 78.69∗ 56.91∗ 71.93∗ 47.38∗ 65.23∗ 60.03∗ 73.87∗ 104.73
+xTune+Tent 70.25 80.80 69.85 80.04 57.74 72.17 48.20 65.83 61.51 74.71 97.21
+xTune+EATA 69.83 80.42 69.48 79.80 57.54 71.90 47.97 65.55 61.21 74.42 95.92
+xTune+OIL 71.51∗ 81.82∗ 70.35∗ 80.76∗ 59.86 74.38 50.47 68.21 63.05 76.29 12.16
+xTune+PCL 71.52 81.88 70.68 81.15 59.68∗ 74.06∗ 50.10∗ 67.80∗ 63.00∗ 76.22∗ 104.73
+xlmr-large 65.55 79.91 64.17 78.37 63.15 78.77 53.87 72.58 61.69 77.41 77.42
+xTune 70.11 83.17 67.20 80.54 65.00 79.91 56.30 74.33 64.65 79.48 77.42
+Tent 71.08 82.97 68.57 80.65 62.27 77.77 52.19 70.94 63.53 78.08 34.32
+EATA 71.20 82.93 68.77 80.61 62.32 77.59 52.15 70.85 63.61 78.00 34.27
+OIL 71.04∗ 83.68∗ 69.59∗ 81.85∗ 64.24 79.40 54.19 72.72 64.77∗ 79.41 4.23
+PCL 71.86 83.75 69.73 81.90 63.80∗ 78.97∗ 54.00∗ 72.56∗ 64.85 79.30∗ 36.69
+xTune+Tent 75.72 86.32 73.37 83.93 65.23 79.58 55.39 73.50 67.43 80.83 34.32
+xTune+EATA 75.56 86.12 73.20 83.88 64.95 79.28 55.36 73.42 67.27 80.68 34.27
+xTune+OIL 75.94∗ 86.72 73.52∗ 84.48∗ 66.02 80.34 56.21∗ 74.23∗ 67.92∗ 81.44 4.23
+xTune+PCL 76.11 86.69∗ 73.89 84.58 65.81∗ 80.08∗ 56.29 74.27 68.03 81.41∗ 36.69
+5.2. Baselines
+We leverage the following typical and strong baselines for
+comparison to calibrate the effectiveness of our PCL:
+Tent (Wang et al., 2021b) updates the model at test time by
+entropy minimization. The prediction is given immediately,
+and the updated model will affect the next iteration.
+EA TA(Niu et al., 2022) ﬁlters the pseudo-labels of the sam-
+ple. It only updates the reliable and non-redundant samples.
+In addition, EATA restricts the updating of the model so that
+the model will not forget the knowledge learned in the past.
+OIL (Ye et al., 2022) uses the teacher-student paradigm to
+optimize the quality of pseudo-labels, which can prevent the
+knowledge learned by the model from getting worse.
+In addition to the three fully TTA methods mentioned above,
+we also compare with xTune (Zheng et al., 2021), a very
+strong robustness tuning method, and combine TTA meth-
+ods with robustness tuning.
+5.3. Setup
+We ﬁnd that the results of full parameters update are similar
+to that of only updating LayerNorm parameters. Thus, to
+shorten the inference time, all TTA methods only update
+LayerNorm parameters. It should be noted that when we
+reproduce EATA, we do not consider its redundant ﬁlter-
+ing because different tasks make it difﬁcult to compare the
+cosine similarity. It may cause the update speed of EATA
+to slow down slightly. For PCL, we use the perturbation
+of normal distribution and dropout at the same time, where
+the normal distribution is the standard normal distribution.
+For the QA task, the dropout rate we selected is 0.3; for
+the NER task, the dropout rate we selected is 0.1. We tune
+the model with the learning rate in{1e-5, 2e-5, 5e-5, 1e-4,
+2e-4}. For the QA task, we select XLM-Roberta-base and
+XLM-Roberta-large (Conneau et al., 2020) as our backbone;
+for the NER task, we choose BERT-base and BERT-large
+as our backbone. We run all experiments three times with
+different random seeds and take the averaged value as the
+ﬁnal experimental results. We report the F1 and EM metrics
+for each QA dataset, F1 metric for NER datasets, and also
+provide the processing speed of the test-time methods in
+terms of samples per second, which is used to evaluate their
+efﬁciency. All experiments are completed on NVIDIA RTX
+A5000 GPU. Detailed data of all hyper-parameters are given
+in the Appendix A.
+
+--- Page 6 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+5.4. Main Results on QA
+Table 5 shows the results of all baselines and our method
+on the QA task. We select XLM-Roberta-base and XLM-
+Roberta-large as the base model. To train the source model
+on SQuAD with direct ﬁne-tuning, we use the default train-
+ing setup from (Hu et al., 2020). About robustness tuning,
+we select a strong baseline xTune (Zheng et al., 2021) and
+train the base model under the default training setup.
+Robustness Tuning xTune is an effective method to im-
+prove the robustness of the model. With xTune, the general-
+ization of the model will be signiﬁcantly improved. xTune
+is superior to the direct ﬁne-tune model in all four datasets.
+For XLM-Roberta-base, xTune is 5.8% higher on EM 3.5%
+higher on F1 score than direct ﬁne-tuning on average; For
+XLM-Roberta-large, xTune is 4.8% higher on EM 2.7%
+higher on F1 score than direct ﬁne-tuning on average.
+Test Time Adaptation Tent and EATA perform well in
+speed but not in accuracy. When using XLM-Roberta-base
+as the base model, the accuracy of Tent and EATA is even
+worse than that of direct forward. This may be because of
+the insufﬁcient discrimination ability of the model itself and
+the unstable output, resulting in the low quality of pseudo-
+labels, which makes the effect of TTA not ideal. When
+using XLM-Roberta-large as the base model, both Tent
+and EATA have achieved good results. The effect of TTA
+has been signiﬁcantly improved after the quality of pseudo-
+labels improved. OIL can achieve stable and considerable
+improvement based on the base model. With exponentially
+smoothed teacher and stable output, the quality of OIL’s
+pseudo-label is higher than that of Tent and EATA, which
+makes it possible that even when XLM-Roberta-base is used
+as the base model, OIL can obtain a signiﬁcant performance
+improvement. However, the inference speed of OIL is too
+slow. In TTA, inference speed is a critical factor. Compared
+with direct forward, the speed of OIL is about 20 times
+slower, which we cannot accept. PCL can maintain high
+inference speed and high accuracy at the same time. PCL
+accelerates the inference speed by nearly ten times while
+maintaining comparable accuracy as OIL. PCL can obtain
+higher accuracy than Tent and EATA while keeping slightly
+faster than them. When XLM-Roberta-large is used as
+the base model, PCL can achieve an average of 5.1% EM
+improvement and 2.4% F1 improvement on four datasets.
+PCL is about two times slower than direct forward, which
+is acceptable. Test time adaptation can generally achieve
+considerable performance improvement based on the base
+model, but this will sacriﬁce certain inference speeds.
+TTA with Robustness Tuning Robustness tuning and
+TTA are compatible, and the effect of TTA depends mainly
+on the model’s performance. If robustness tuning has a
+Table 2. Benchmarking results (%) on NER for BERT-base and
+BERT-large. Context refers to the use of context based attack,
+entity refers to the use of entity based attack, and full refers to the
+simultaneous use of the two attack methods. We report the results
+of F1 scores in this table. Bold: the best results
+Model Context Entity Full A vg. Speed
+bert-base 82.38 59.59 54.68 65.55 1952.36
+Tent 82.33 61.16 57.72 67.07 579.68
+EATA 82.25 61.37 58.09 67.23 531.60
+OIL 82.07 61.53 56.96 66.85 236.94
+PCL 82.99 63.38 59.21 68.53 631.63
+bert-large 83.11 62.44 57.78 67.77 1030.71
+Tent 82.60 63.68 59.03 68.43 273.03
+EATA 82.35 63.01 59.05 68.14 255.86
+OIL 82.90 64.57 59.45 68.97 104.12
+PCL 83.28 65.63 62.09 70.33 294.44
+performance improvement based on the model itself, TTA
+can further improve the model’s performance. When using
+XLM-Roberta-large as the base model, PCL has increased
+EM and F1 by 5.2% and 2.4% based on xTune, 5.1%, and
+2.4% based on direct ﬁne-tuning. Robustness tuning and
+TTA complement each other; when both are used at the
+same time, the accuracy of the model will be dramatically
+improved and get SOTA results.
+5.5. Main Results on NER
+Table 2 shows the results of various baselines and our
+method on the RockNER dataset. Tent and EATA can im-
+prove performance in NER tasks while maintaining good
+inference speed. OIL can also improve the performance of
+the model. However, the improvement on this dataset is
+relatively limited, which is comparable to that of Tent and
+EATA, and the speed of OIL is still not fast enough, nearly
+ten times slower than that of direct forward. PCL is slightly
+faster than Tent and EATA, about three times faster than
+OIL, and the effect is signiﬁcantly better than theirs. PCL
+can increase F1 value by 2.98% based on BERT-base and
+2.56% based on BERT-large. TTA has no pronounced effect
+on the context-level attachment on RockNER. This may
+be because the context-level attack is not effective enough,
+resulting in the high accuracy of the model itself after the
+attack, and it is not easy to improve on this basis. For entity-
+level attacks and full attacks, TTA has a very signiﬁcant
+effect. PCL achieves SOTA results on both inference speed
+and performance improvement.
+6. Analysis and Discussion
+6.1. Online Learning
+Online learning is a typical setting in TTA. In this case,
+TTA will update the model without resetting it. Online is a
+
+--- Page 7 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+50
+55
+60
+65
+70
+75
+80
+85
+EM F1
+forward Tent EATA OIL PCL
+Figure 3. Results (%) of different TTA methods and direct forward
+on XQuAD, where the base model is XLMR-base-xTune.
+50
+55
+60
+65
+70
+75
+80
+85
+EM F1
+forward Tent EATA OIL PCL
+Figure 4. Results (%) of different TTA methods and direct forward
+on XQuAD, where the base model is XLMR-large-xTune.
+more challenging and practical setting, requiring the model
+to adapt to changing distribution rather than a single target
+distribution. Under this setting, TTA is more likely to output
+false pseudo-labels when the distribution changes, which
+makes the model accumulate errors during the test-time
+stage and is even prone to collapse. We test the perfor-
+mance of each TTA method under the online setting on the
+XQuAD dataset. Figure 3 and Figure 4 show the results
+of each TTA method when XLM-Roberta-base-xTune and
+XLM-Roberta-large-xTune are used as base models. Un-
+der the online setting, the effects of both Tent and EATA
+are not ideal, and both have some performance degradation
+based on the base model. OIL and PCL can still achieve
+performance improvement. The performance improvement
+is minimal when XLM-Roberta-large-xTune is used as the
+base model. When XLM-Roberta-base-xTune is used as the
+base model, the improvement of EM and F1 is more promi-
+nent. The performance of OIL and PCL are equivalent, but
+the inference speed of OIL makes it not a good solution.
+70
+72
+74
+76
+78
+80
+1e-6 2e-6 5e-6 1e-5 2e-5 5e-5 1e-4 2e-4 5e-4
+Tent EATA PCL OIL
+Figure 5. F1 scores of different TTA methods and different learning
+rates on NoiseQA-na, where the base model is XLM-Roberta-base.
+6.2. Learning Rate
+The learning rate is a very important hyper-parameter in
+TTA, and different learning rates will signiﬁcantly impact
+the effect of TTA. When the learning rate is too low, the
+model parameters are not sufﬁciently updated, which will
+lead to the effect of TTA not being obvious. When the
+learning rate is too big, the model easily collapses, and the
+model’s performance is signiﬁcantly reduced. In actual ap-
+plication scenarios, it is unrealistic to select the learning rate
+in the test-time phase ﬁnely. Thus, TTA’s sensitivity to the
+learning rate is a signiﬁcant factor in evaluating the effec-
+tiveness of a TTA method. In order to verify the sensitivity
+of each baseline and PCL to the learning rate, we conduct
+experiments on the NoiseQA-na dataset with XLM-Roberta-
+base as the base model. Figure 5 shows the experimental
+results. The overall trend of each method is the same. It
+can be seen from the ﬁgure that TTA has no apparent effect
+when the learning rate is relatively low. With the increase
+in the learning rate, the model’s performance improves. Af-
+ter reaching the peak, continuing to increase the learning
+rate will make the performance of the model decline rapidly.
+Among them, Tent has the fastest decline speed. Meanwhile,
+EATA, OIL, and PLC exhibit a relatively stable descent rate,
+making them more robust to learning rate than Tent.
+6.3. Perturbations
+The core of PCL is its perturbing method. In order to study
+the effect of different perturbing methods, we use BERT-
+base and BERT-large as the base model and conduct experi-
+ments on the RockNER dataset. Table 3 shows the results
+under different perturbation methods. The model’s perfor-
+mance will signiﬁcantly improve if the perturbation is added
+and back-propagated. The method of adding normal dis-
+tribution to the feature and the method of using dropout
+have good results, and the results are comparable. When
+the two perturbation methods are used simultaneously, the
+
+--- Page 8 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+Table 3. F1 scores of different perturbing methods on RockNER.
+Model Context Entity Full A vg.
+bert-base 82.38 59.59 54.68 65.55
+PCL 82.99 63.38 59.21 68.53
+PCL w/o norm 82.84 62.17 58.70 67.90
+PCL w/o dropout 82.84 62.66 58.95 68.15
+bert-large 83.11 62.44 57.78 67.77
+PCL 83.28 65.63 62.09 70.33
+PCL w/o norm 83.15 65.40 61.84 70.13
+PCL w/o dropout 83.24 65.01 61.98 70.08
+67
+68
+69
+70
+71
+0.1 0.2 0.3 0.4 0.5
+base large
+Figure 6. F1 scores of different dropout rates on RockNER.
+model’s performance will be further improved. We believe
+that there are still better ways to add perturbations, such as
+using neural networks to generate the perturbations. When
+the way to add perturbations improves, the performance of
+PCL will also improve.
+6.4. Dropout Rate
+When using dropout as the perturbing method, the dropout
+rate is also a very important hyper-parameter, directly deter-
+mining how strong the perturbation is. We hope PCL is not
+so sensitive to this hyper-parameter and maintains a good
+effect under different dropout rates. In order to verify the ro-
+bustness of PCL to the dropout rate, we use BERT-base and
+BERT-large as the base model and carry out experiments on
+the RockNER dataset. The results are shown in ﬁgure 6. In
+general, PCL is robust to the dropout rate. Under different
+dropout rates, PCL can perform well consistently. This may
+be because the feature layer itself is robust to dropout when
+the model is trained. It can be seen from ﬁgure 6 that when
+the dropout rate is slightly lower, the performance of PCL
+may be slightly better, which is also consistent with our core
+idea, i.e., maintaining the consistency of output under small
+perturbations.
+I am going to Hong Kong .
+B-PER O O O B-LOC I-LOC O
+Figure 7. A brief example of NER entities.
+Table 4. Results of error analysis. R− →W refers to right prediction
+for ﬁne-tuning and wrong prediction for TTA, similarly as W− →
+R. Net Value refers to the difference between the two value.
+Model R − →W W − →R Net Value
+Tent 1038 1002 -36
+EATA 1298 1363 65
+OIL 1007 1437 430
+PCL 985 1432 447
+6.5. Error Analysis
+We conduct more ﬁne-grained experiments to study the po-
+tential and drawbacks of PCL. Speciﬁcally, we want to know
+how many samples that are mispredicted can be predicted
+correctly and how many samples that are predicted correctly
+will be mispredicted after using PCL compared with the
+direct ﬁne-tuning model. We extract all the entities in the ex-
+periment without considering the token labeled “O”. If the
+model prediction is entirely correct, we believe this entity’s
+prediction is correct. As shown in Figure 7, if the prediction
+result of “I” is “B-PER”, we believe that the entity’s predic-
+tion is correct; We conduct experiments on the RockNER
+dataset with BERT-base as the base model. The results are
+shown in Table 4. The model’s performance with Tent on
+entities will even be weakened, and EATA will slightly im-
+prove based on the base model. The effect of OIL and PCL
+is signiﬁcantly better than that of Tent and EATA. We ﬁnd
+that even though TTA can predict many entities with wrong
+predictions correct, it will also predict many entities with
+correct predictions wrong. We believe that if the R − →W
+value can be reduced, the effect of TTA will be signiﬁcantly
+increased. We speculate that forgetting from TTA leads to
+incorrect prediction of samples that the model could have
+correctly predicted. Therefore, reducing forgetting in the
+test-time phase is a promising direction to further improve
+the performance of TTA.
+7. Conclusion
+In this paper, we analyze the problems of existing TTA
+methods in NLP tasks and propose a simple yet effective
+TTA method, PCL. Our method turns off dropout in the
+trained model to avoid the performance degradation caused
+by dropout and then adds perturbation to the features and
+constrains the predictions’ consistency with the original
+features to avoid overﬁtting caused by not using dropout.
+
+--- Page 9 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+Extensive experimental results demonstrate our method can
+achieve higher or comparable performance with less infer-
+ence time than previous state-of-the-art TTA methods. In
+future work, we will apply our PCL method to more chal-
+lenging NLP tasks or settings, such as style-transfer text
+generation and cross-lingual syntax parsing.
+References
+Alzantot, M., Sharma, Y ., Elgohary, A., Ho, B.-J., Srivas-
+tava, M., and Chang, K.-W. Generating natural language
+adversarial examples. In Proceedings of the 2018 Confer-
+ence on Empirical Methods in Natural Language Pro-
+cessing, pp. 2890–2896, Brussels, Belgium, October-
+November 2018. Association for Computational Lin-
+guistics. doi: 10.18653/v1/D18-1316. URL https:
+//aclanthology.org/D18-1316.
+Artetxe, M., Ruder, S., and Yogatama, D. On the cross-
+lingual transferability of monolingual representations. In
+Proceedings of the 58th Annual Meeting of the Associa-
+tion for Computational Linguistics, pp. 4623–4637, 2020.
+Banerjee, P., Gokhale, T., and Baral, C. Self-supervised test-
+time learning for reading comprehension. In Proceedings
+of the 2021 Conference of the North American Chapter of
+the Association for Computational Linguistics: Human
+Language Technologies, pp. 1200–1211, 2021.
+Bartler, A., B¨uhler, A., Wiewel, F., D¨obler, M., and Yang,
+B. Mt3: Meta test-time training for self-supervised test-
+time adaption. In International Conference on Artiﬁcial
+Intelligence and Statistics, pp. 3080–3090. PMLR, 2022.
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J. D.,
+Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G.,
+Askell, A., et al. Language models are few-shot learners.
+Advances in neural information processing systems, 33:
+1877–1901, 2020.
+Chen, D., Wang, D., Darrell, T., and Ebrahimi, S. Con-
+trastive test-time adaptation. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern
+Recognition, pp. 295–305, 2022.
+Chen, J., Yang, Z., and Yang, D. MixText: Linguistically-
+informed interpolation of hidden space for semi-
+supervised text classiﬁcation. In Proceedings of the 58th
+Annual Meeting of the Association for Computational
+Linguistics, pp. 2147–2157, Online, July 2020. Associ-
+ation for Computational Linguistics. doi: 10.18653/v1/
+2020.acl-main.194. URL https://aclanthology.
+org/2020.acl-main.194.
+Chen, J., Shen, D., Chen, W., and Yang, D. Hiddencut: Sim-
+ple data augmentation for natural language understanding
+with better generalizability. In Proceedings of the 59th
+Annual Meeting of the Association for Computational Lin-
+guistics and the 11th International Joint Conference on
+Natural Language Processing (Volume 1: Long Papers),
+pp. 4380–4390, 2021.
+Conneau, A., Khandelwal, K., Goyal, N., Chaudhary, V .,
+Wenzek, G., Guzm´an, F., Grave, ´E., Ott, M., Zettlemoyer,
+L., and Stoyanov, V . Unsupervised cross-lingual repre-
+sentation learning at scale. In Proceedings of the 58th
+Annual Meeting of the Association for Computational
+Linguistics, pp. 8440–8451, 2020.
+Devlin, J., Chang, M.-W., Lee, K., and Toutanova, K. Bert:
+Pre-training of deep bidirectional transformers for lan-
+guage understanding. In Proceedings of the 2019 Confer-
+ence of the North American Chapter of the Association for
+Computational Linguistics: Human Language Technolo-
+gies, Volume 1 (Long and Short Papers), pp. 4171–4186,
+2019.
+Ebrahimi, J., Rao, A., Lowd, D., and Dou, D. Hotﬂip:
+White-box adversarial examples for text classiﬁcation. In
+Proceedings of the 56th Annual Meeting of the Associ-
+ation for Computational Linguistics (Volume 2: Short
+Papers), pp. 31–36, 2018.
+Gandelsman, Y ., Sun, Y ., Chen, X., and Efros, A. A.
+Test-time training with masked autoencoders. In Oh,
+A. H., Agarwal, A., Belgrave, D., and Cho, K. (eds.),
+Advances in Neural Information Processing Systems ,
+2022. URL https://openreview.net/forum?
+id=SHMi1b7sjXk.
+Garg, S. and Ramakrishnan, G. BAE: BERT-based ad-
+versarial examples for text classiﬁcation. In Proceed-
+ings of the 2020 Conference on Empirical Methods
+in Natural Language Processing (EMNLP) , pp. 6174–
+6181, Online, November 2020. Association for Computa-
+tional Linguistics. doi: 10.18653/v1/2020.emnlp-main.
+498. URL https://aclanthology.org/2020.
+emnlp-main.498.
+Gong, T., Jeong, J., Kim, T., Kim, Y ., Shin, J., and Lee, S.-
+J. NOTE: Robust continual test-time adaptation against
+temporal correlation. In Oh, A. H., Agarwal, A., Bel-
+grave, D., and Cho, K. (eds.), Advances in Neural In-
+formation Processing Systems , 2022. URL https:
+//openreview.net/forum?id=E9HNxrCFZPV.
+Goyal, S., Sun, M., Raghunathan, A., and Kolter, J. Z.
+Test time adaptation via conjugate pseudo-labels. In Oh,
+A. H., Agarwal, A., Belgrave, D., and Cho, K. (eds.),
+Advances in Neural Information Processing Systems ,
+2022. URL https://openreview.net/forum?
+id=2yvUYc-YNUH.
+
+--- Page 10 ---
+Test-Time Adaptation with Perturbation Consistency Learning
+He, K., Zhang, X., Ren, S., and Sun, J. Deep residual learn-
+ing for image recognition. In Proceedings of the IEEE
+conference on computer vision and pattern recognition,
+pp. 770–778, 2016.
+Hendrycks, D., Liu, X., Wallace, E., Dziedzic, A., Krish-
+nan, R., and Song, D. Pretrained transformers improve
+out-of-distribution robustness. In Proceedings of the 58th
+Annual Meeting of the Association for Computational
+Linguistics, pp. 2744–2751, Online, July 2020. Associ-
+ation for Computational Linguistics. doi: 10.18653/v1/
+2020.acl-main.244. URL https://aclanthology.
+org/2020.acl-main.244.
+Hu, J., Ruder, S., Siddhant, A., Neubig, G., Firat, O., and
+Johnson, M. Xtreme: A massively multilingual multi-task
+benchmark for evaluating cross-lingual generalisation. In
+International Conference on Machine Learning, pp. 4411–
+4421. PMLR, 2020.
+Hupkes, D., Giulianelli, M., Dankers, V ., Artetxe, M.,
+Elazar, Y ., Pimentel, T., Christodoulopoulos, C., Lasri,
+K., Saphra, N., Sinclair, A., et al. State-of-the-art gener-
+alisation research in nlp: a taxonomy and review. arXiv
+preprint arXiv:2210.03050, 2022.
+Jafari, A. R., Heidary, B., Farahbakhsh, R., Salehi, M., and
+Jalili, M. Transfer learning for multi-lingual tasks - a
+survey. CoRR, abs/2110.02052, 2021. URL https:
+//arxiv.org/abs/2110.02052.
+Jang, M. and Chung, S.-Y . Test-time adaptation via self-
+training with nearest neighbor information.arXiv preprint
+arXiv:2207.10792, 2022.
+Jia, R., Raghunathan, A., G ¨oksel, K., and Liang, P. Cer-
+tiﬁed robustness to adversarial word substitutions. In
+Proceedings of the 2019 Conference on Empirical Meth-
+ods in Natural Language Processing and the 9th Inter-
+national Joint Conference on Natural Language Pro-
+cessing (EMNLP-IJCNLP), pp. 4129–4142, Hong Kong,
+China, November 2019. Association for Computational
+Linguistics. doi: 10.18653/v1/D19-1423. URL https:
+//aclanthology.org/D19-1423.
+Kaushik, D., Hovy, E., and Lipton, Z. Learning the dif-
+ference that makes a difference with counterfactually-
+augmented data. In International Conference on Learning
+Representations, 2020.
+Khashabi, D., Khot, T., and Sabharwal, A. More bang
+for your buck: Natural perturbation for robust ques-
+tion answering. In Proceedings of the 2020 Con-
+ference on Empirical Methods in Natural Language
+Processing (EMNLP) , pp. 163–170, Online, Novem-
+ber 2020. Association for Computational Linguistics.
+doi: 10.18653/v1/2020.emnlp-main.12. URL https:
+//aclanthology.org/2020.emnlp-main.12.
+Lewis, M., Liu, Y ., Goyal, N., Ghazvininejad, M., Mo-
+hamed, A., Levy, O., Stoyanov, V ., and Zettlemoyer, L.
+Bart: Denoising sequence-to-sequence pre-training for
+natural language generation, translation, and comprehen-
+sion. In Proceedings of the 58th Annual Meeting of the As-
+sociation for Computational Linguistics, pp. 7871–7880,
+2020a.
+Lewis, P., Oguz, B., Rinott, R., Riedel, S., and Schwenk,
+H. Mlqa: Evaluating cross-lingual extractive question
+answering. In Proceedings of the 58th Annual Meeting of
+the Association for Computational Linguistics, pp. 7315–
+7330, 2020b.
+Li, J., Ji, S., Du, T., Li, B., and Wang, T. Textbugger: Gen-
+erating adversarial text against real-world applications.
+arXiv preprint arXiv:1812.05271, 2018.
+Li, J., He, R., Ye, H., Ng, H. T., Bing, L., and Yan, R.
+Unsupervised domain adaptation of a pretrained cross-
+lingual language model. In Proceedings of the Twenty-
+Ninth International Conference on International Joint
+Conferences on Artiﬁcial Intelligence , pp. 3672–3678,
+2021.
+Li, L., Ma, R., Guo, Q., Xue, X., and Qiu, X. Bert-attack:
+Adversarial attack against bert using bert. In Proceedings
+of the 2020 Conference on Empirical Methods in Natural
+Language Processing (EMNLP), pp. 6193–6202, 2020.
+Liang, X., Wu, L., Li, J., Wang, Y ., Meng, Q., Qin, T.,
+Chen, W., Zhang, M., Liu, T.-Y ., et al. R-drop: Regular-
+ized dropout for neural networks. Advances in Neural
+Information Processing Systems, 34:10890–10905, 2021.
+Lin, B. Y ., Gao, W., Yan, J., Moreno, R., and Ren, X. Rock-
+ner: A simple method to create adversarial examples
+for evaluating the robustness of named entity recogni-
+tion models. In Proceedings of the 2021 Conference on
+Empirical Methods in Natural Language Processing, pp.
+3728–3737, 2021.
+Liu, X., Sun, T., He, J., Wu, J., Wu, L., Zhang, X., Jiang,
+H., Cao, Z., Huang, X.-J., and Qiu, X. Towards efﬁcient
+nlp: A standard evaluation and a strong baseline. In Pro-
+ceedings of the 2022 Conference of the North American
+Chapter of the Association for Computational Linguistics:
+Human Language Technologies, pp. 3288–3303, 2022.
+Liu, Y ., Ott, M., Goyal, N., Du, J., Joshi, M., Chen, D.,
+Levy, O., Lewis, M., Zettlemoyer, L., and Stoyanov, V .
+Roberta: A robustly optimized bert pretraining approach.
+arXiv preprint arXiv:1907.11692, 2019.
+Liu, Y ., Kothari, P., van Delft, B., Bellot-Gurlet, B., Mordan,
+T., and Alahi, A. Ttt++: When does self-supervised
+test-time training fail or thrive? Advances in Neural
+Information Processing Systems, 34:21808–21820, 2021.

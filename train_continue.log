@@ -1,0 +1,50 @@
+📂 Loading data...
+✓ Using cached preprocessed data
+Loading cached data from ./dataset/cache/train_cached.pt...
+✓ Loaded 39276 preprocessed samples
+Loading cached data from ./dataset/cache/dev_cached.pt...
+✓ Loaded 15050 preprocessed samples
+Loading cached data from ./dataset/cache/test_cached.pt...
+✓ Loaded 28825 preprocessed samples
+✓ Optimized mapping matrices created:
+  A2C matrix: torch.Size([114, 141]), 1721 connections
+  C2A matrix: torch.Size([141, 114]), 1721 connections
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 6522.36it/s]
+[transformers] [1mBertModel LOAD REPORT[0m from: /root/models/bert-base-chinese/models/tiansz--bert-base-chinese/snapshots/master
+Key                                        | Status     |  | 
+-------------------------------------------+------------+--+-
+cls.predictions.transform.LayerNorm.bias   | UNEXPECTED |  | 
+cls.seq_relationship.bias                  | UNEXPECTED |  | 
+cls.seq_relationship.weight                | UNEXPECTED |  | 
+cls.predictions.bias                       | UNEXPECTED |  | 
+cls.predictions.transform.dense.bias       | UNEXPECTED |  | 
+cls.predictions.transform.dense.weight     | UNEXPECTED |  | 
+cls.predictions.transform.LayerNorm.weight | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+/root/tta-law/train_ultrafast.py:58: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  self.scaler = GradScaler()
+✓ Model: 159,175,682 parameters
+
+============================================================
+🔄 从checkpoint恢复训练: checkpoints/checkpoint_epoch_13.pt
+============================================================
+Traceback (most recent call last):
+  File "/root/tta-law/train_ultrafast.py", line 463, in <module>
+    main()
+  File "/root/tta-law/train_ultrafast.py", line 425, in main
+    trainer = UltraFastTrainer(config, resume_from=args.resume)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/tta-law/train_ultrafast.py", line 73, in __init__
+    self.resume_from_checkpoint(resume_from)
+  File "/root/tta-law/train_ultrafast.py", line 93, in resume_from_checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=self.config.device, weights_only=False)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/miniconda3/lib/python3.12/site-packages/torch/serialization.py", line 1486, in load
+    with _open_zipfile_reader(opened_file) as opened_zipfile:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/miniconda3/lib/python3.12/site-packages/torch/serialization.py", line 771, in __init__
+    super().__init__(torch._C.PyTorchFileReader(name_or_buffer))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: PytorchStreamReader failed reading zip archive: failed finding central directory
